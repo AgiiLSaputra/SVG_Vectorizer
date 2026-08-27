@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SVG Vectorizer</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>&#9998; SVG Vectorizer</h1>
+            <p class="subtitle">Konversi gambar raster menjadi SVG vector</p>
+        </header>
+
+        <main>
+            <!-- Upload Area -->
+            <div class="upload-area" id="dropZone">
+                <div class="upload-icon">&#128444;</div>
+                <p class="upload-text">Seret & lepas gambar di sini</p>
+                <p class="upload-subtext">atau klik untuk memilih file</p>
+                <input type="file" id="fileInput" accept="image/*" hidden>
+                <p class="upload-info">Maks 16MB &bull; PNG, JPG, BMP, GIF, TIFF, WEBP</p>
+            </div>
+
+            <!-- Preview Area -->
+            <div class="preview-area hidden" id="previewArea">
+                <div class="preview-header">
+                    <h3>Preview</h3>
+                    <button class="btn-icon" id="removeBtn" title="Hapus">&#10005;</button>
+                </div>
+                <div class="preview-container">
+                    <img id="previewImage" src="" alt="Preview">
+                </div>
+                <p class="file-name" id="fileName"></p>
+            </div>
+
+            <!-- Settings -->
+            <div class="settings-panel">
+                <h3>Pengaturan</h3>
+                <div class="settings-grid">
+                    <div class="setting-group">
+                        <label for="modeSelect">Mode</label>
+                        <select id="modeSelect">
+                            <option value="auto">Otomatis</option>
+                            <option value="bw">Hitam-Putih</option>
+                            <option value="color">Full Color</option>
+                        </select>
+                    </div>
+                    <div class="setting-group">
+                        <label for="colorsInput">Jumlah Warna</label>
+                        <input type="number" id="colorsInput" value="8" min="2" max="64">
+                    </div>
+                    <div class="setting-group">
+                        <label for="epsilonInput">
+                            Epsilon (px)
+                            <span class="tooltip">&#63;
+                                <span class="tooltip-text">Toleransi simplifikasi kontur (Douglas-Peucker). Makin besar = lebih sedikit titik = bentuk lebih sederhana tapi kurang detail.</span>
+                            </span>
+                        </label>
+                        <input type="number" id="epsilonInput" value="2.0" min="0.5" max="10" step="0.5">
+                    </div>
+                    <div class="setting-group">
+                        <label for="maxErrorInput">
+                            Max Error (px)
+                            <span class="tooltip">&#63;
+                                <span class="tooltip-text">Toleransi kecocokan kurva Bezier dengan bentuk asli. Makin kecil = kurva lebih presisi tapi file SVG lebih besar.</span>
+                            </span>
+                        </label>
+                        <input type="number" id="maxErrorInput" value="2.0" min="0.5" max="10" step="0.5">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Convert Button -->
+            <button class="btn-convert" id="convertBtn" disabled>
+                <span id="btnText">Konversi ke SVG</span>
+                <div class="spinner hidden" id="spinner"></div>
+            </button>
+
+            <!-- Result Area -->
+            <div class="result-area hidden" id="resultArea">
+                <div class="result-header">
+                    <h3>&#10004; Berhasil!</h3>
+                </div>
+                <div class="result-info">
+                    <div class="info-item">
+                        <span class="info-label">File</span>
+                        <span class="info-value" id="resultFile">-</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Ukuran</span>
+                        <span class="info-value" id="resultSize">-</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Waktu</span>
+                        <span class="info-value" id="resultTime">-</span>
+                    </div>
+                </div>
+                <div class="result-preview">
+                    <img id="resultSvg" src="" alt="SVG Result">
+                </div>
+                <div class="result-actions">
+                    <a class="btn-download" id="downloadBtn" href="#" download>
+                        &#11015; Download SVG
+                    </a>
+                    <button class="btn-secondary" id="newBtn">
+                        &#8635; Konversi Lagi
+                    </button>
+                </div>
+            </div>
+
+            <!-- Error Area -->
+            <div class="error-area hidden" id="errorArea">
+                <p id="errorMsg"></p>
+            </div>
+        </main>
+
+        <footer>
+            <p>Dibuat dengan Python &bull; Flask &bull; NumPy &bull; Pillow</p>
+        </footer>
+    </div>
+
+    <script>
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+        const previewArea = document.getElementById('previewArea');
+        const previewImage = document.getElementById('previewImage');
+        const fileName = document.getElementById('fileName');
+        const removeBtn = document.getElementById('removeBtn');
+        const convertBtn = document.getElementById('convertBtn');
+        const btnText = document.getElementById('btnText');
+        const spinner = document.getElementById('spinner');
+        const resultArea = document.getElementById('resultArea');
+        const errorArea = document.getElementById('errorArea');
+        const errorMsg = document.getElementById('errorMsg');
+        const newBtn = document.getElementById('newBtn');
+
+        let selectedFile = null;
+
+        // Drop zone events
+        dropZone.addEventListener('click', () => fileInput.click());
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+        dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+        });
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length) handleFile(e.target.files[0]);
+        });
+
+        function handleFile(file) {
+            if (!file.type.startsWith('image/')) {
+                showError('File harus berupa gambar!');
+                return;
+            }
+            selectedFile = file;
+            fileName.textContent = file.name;
+            previewImage.src = URL.createObjectURL(file);
+            dropZone.classList.add('hidden');
+            previewArea.classList.remove('hidden');
+            convertBtn.disabled = false;
+            hideError();
+            hideResult();
+        }
+
+        removeBtn.addEventListener('click', () => {
+            selectedFile = null;
+            fileInput.value = '';
+            dropZone.classList.remove('hidden');
+            previewArea.classList.add('hidden');
+            convertBtn.disabled = true;
+            hideResult();
+            hideError();
+        });
+
+        convertBtn.addEventListener('click', async () => {
+            if (!selectedFile) return;
+
+            const formData = new FormData();
+            formData.append('file', selectedFile);
+            formData.append('mode', document.getElementById('modeSelect').value);
+            formData.append('colors', document.getElementById('colorsInput').value);
+            formData.append('epsilon', document.getElementById('epsilonInput').value);
+            formData.append('max_error', document.getElementById('maxErrorInput').value);
+
+            convertBtn.disabled = true;
+            btnText.textContent = 'Memproses...';
+            spinner.classList.remove('hidden');
+            hideError();
+            hideResult();
+
+            try {
+                const resp = await fetch('/upload', { method: 'POST', body: formData });
+                const data = await resp.json();
+
+                if (data.success) {
+                    document.getElementById('resultFile').textContent = data.original;
+                    document.getElementById('resultSize').textContent = formatSize(data.size);
+                    document.getElementById('resultTime').textContent = data.time + ' detik';
+                    document.getElementById('resultSvg').src = '/preview/' + data.filename;
+                    document.getElementById('downloadBtn').href = '/download/' + data.filename;
+                    resultArea.classList.remove('hidden');
+                } else {
+                    showError(data.error || 'Gagal memproses file');
+                }
+            } catch (err) {
+                showError('Terjadi kesalahan: ' + err.message);
+            } finally {
+                convertBtn.disabled = false;
+                btnText.textContent = 'Konversi ke SVG';
+                spinner.classList.add('hidden');
+            }
+        });
+
+        newBtn.addEventListener('click', () => {
+            selectedFile = null;
+            fileInput.value = '';
+            dropZone.classList.remove('hidden');
+            previewArea.classList.add('hidden');
+            convertBtn.disabled = true;
+            hideResult();
+            hideError();
+        });
+
+        function formatSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+        }
+
+        function showError(msg) {
+            errorMsg.textContent = msg;
+            errorArea.classList.remove('hidden');
+        }
+
+        function hideError() {
+            errorArea.classList.add('hidden');
+        }
+
+        function hideResult() {
+            resultArea.classList.add('hidden');
+        }
+    </script>
+</body>
+</html>
